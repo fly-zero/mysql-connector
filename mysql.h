@@ -24,46 +24,47 @@ namespace flyzero
         static const uint32_t USERNAME_LENGTH = USERNAME_CHAR_LENGTH * SYSTEM_CHARSET_MBMAXLEN;
         static const uint32_t NAME_LEN = NAME_CHAR_LEN * SYSTEM_CHARSET_MBMAXLEN;
 
-        static const uint32_t CLIENT_LONG_PASSWORD = 1;             // new more secure passwords 
-        static const uint32_t CLIENT_FOUND_ROWS = 2;                // Found instead of affected rows 
-        static const uint32_t CLIENT_LONG_FLAG = 4;                 // Get all column flags 
-        static const uint32_t CLIENT_CONNECT_WITH_DB = 8;           // One can specify db on connect 
-        static const uint32_t CLIENT_NO_SCHEMA = 16;                // Don't allow database.table.column 
-        static const uint32_t CLIENT_COMPRESS = 32;                 // Can use compression protocol 
-        static const uint32_t CLIENT_ODBC = 64;                     // Odbc client 
-        static const uint32_t CLIENT_LOCAL_FILES = 128;             // Can use LOAD DATA LOCAL 
-        static const uint32_t CLIENT_IGNORE_SPACE = 256;            // Ignore spaces before '(' 
-        static const uint32_t CLIENT_PROTOCOL_41 = 512;             // New 4.1 protocol 
-        static const uint32_t CLIENT_INTERACTIVE = 1024;            // This is an interactive client 
-        static const uint32_t CLIENT_SSL = 2048;                    // Switch to SSL after handshake 
-        static const uint32_t CLIENT_IGNORE_SIGPIPE = 4096;         // IGNORE sigpipes 
-        static const uint32_t CLIENT_TRANSACTIONS = 8192;           // Client knows about transactions 
-        static const uint32_t CLIENT_RESERVED = 16384;              // Old flag for 4.1 protocol  
-        static const uint32_t CLIENT_RESERVED2 = 32768;             // Old flag for 4.1 authentication 
-        static const uint32_t CLIENT_MULTI_STATEMENTS = 1UL << 16;// Enable/disable multi-stmt support 
-        static const uint32_t CLIENT_MULTI_RESULTS = 1UL << 17;   // Enable/disable multi-results 
-        static const uint32_t CLIENT_PS_MULTI_RESULTS = 1UL << 18;// Multi-results in PS-protocol 
-        static const uint32_t CLIENT_PLUGIN_AUTH = 1UL << 19;     // Client supports plugin authentication 
-        static const uint32_t CLIENT_CONNECT_ATTRS = 1UL << 20;   // Client supports connection attributes 
+        enum client_capability
+        {
+            CLIENT_LONG_PASSWORD    = 1,            // new more secure passwords 
+            CLIENT_FOUND_ROWS       = 2,            // Found instead of affected rows 
+            CLIENT_LONG_FLAG        = 4,            // Get all column flags 
+            CLIENT_CONNECT_WITH_DB  = 8,            // One can specify db on connect 
+            CLIENT_NO_SCHEMA        = 16,           // Don't allow database.table.column 
+            CLIENT_COMPRESS         = 32,           // Can use compression protocol 
+            CLIENT_ODBC             = 64,           // Odbc client 
+            CLIENT_LOCAL_FILES      = 128,          // Can use LOAD DATA LOCAL 
+            CLIENT_IGNORE_SPACE     = 256,          // Ignore spaces before '(' 
+            CLIENT_PROTOCOL_41      = 512,          // New 4.1 protocol 
+            CLIENT_INTERACTIVE      = 1024,         // This is an interactive client 
+            CLIENT_SSL              = 2048,         // Switch to SSL after handshake 
+            CLIENT_IGNORE_SIGPIPE   = 4096,         // IGNORE sigpipes 
+            CLIENT_TRANSACTIONS     = 8192,         // Client knows about transactions 
+            CLIENT_RESERVED         = 16384,        // Old flag for 4.1 protocol  
+            CLIENT_RESERVED2        = 32768,        // Old flag for 4.1 authentication 
+            CLIENT_MULTI_STATEMENTS = 1UL << 16,    // Enable/disable multi-stmt support 
+            CLIENT_MULTI_RESULTS    = 1UL << 17,    // Enable/disable multi-results 
+            CLIENT_PS_MULTI_RESULTS = 1UL << 18,    // Multi-results in PS-protocol 
+            CLIENT_PLUGIN_AUTH      = 1UL << 19,    // Client supports plugin authentication 
+            CLIENT_CONNECT_ATTRS    = 1UL << 20,    // Client supports connection attributes 
+            
+            // Enable authentication response packet to be larger than 255 bytes. 
+            CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1UL << 21,
 
-        // Enable authentication response packet to be larger than 255 bytes. 
-        static const uint32_t CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1UL << 21;
+            // Don't close the connection for a connection with expired password. 
+            CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = 1UL << 22,
 
-        // Don't close the connection for a connection with expired password. 
-        static const uint32_t CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = 1UL << 22;
+            // Capable of handling server state change information. Its a hint to the
+            // server to include the state change information in Ok packet.
+            CLIENT_SESSION_TRACK = 1UL << 23,
 
-        // Capable of handling server state change information. Its a hint to the
-        // server to include the state change information in Ok packet.
-        static const uint32_t CLIENT_SESSION_TRACK = 1UL << 23;
-        // Client no longer needs EOF packet
-        static const uint32_t CLIENT_DEPRECATE_EOF = 1UL << 24;
+            // Client no longer needs EOF packet
+            CLIENT_DEPRECATE_EOF = 1UL << 24,
 
-        static const uint32_t CLIENT_SSL_VERIFY_SERVER_CERT = 1UL << 30;
-        static const uint32_t CLIENT_REMEMBER_OPTIONS = 1UL << 31;
+            CLIENT_SSL_VERIFY_SERVER_CERT = 1UL << 30,
+            CLIENT_REMEMBER_OPTIONS = 1UL << 31,
+        };
 
-        // Note: CLIENT_CAPABILITIES is also defined in sql/client_settings.h.
-        // When adding capabilities here, consider if they should be also added to
-        // the server's version.
         static const uint32_t CLIENT_CAPABILITIES = CLIENT_LONG_PASSWORD | \
                                                     CLIENT_LONG_FLAG | \
                                                     CLIENT_TRANSACTIONS | \
