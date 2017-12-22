@@ -176,11 +176,11 @@ namespace flyzero
     mysql::connection_attributes::connection_attributes()
         : attrs_length_(0)
     {
-        insert("_os", "Linux");                 // TODO: try a diffrent os string
-        insert("_client_name", "libmysql");     // TODO: try a diffrent client name string
-        insert("_pid", get_pid_str());
-        insert("_client_version", "6.1.11");    // TODO: try a diffrent version string
-        insert("_platform", "x86_64");          // TODO: get platform dynamic or by MACRO
+        insert("_os", "Linux");                 // set os
+        insert("_client_name", "libmysql");     // set client name
+        insert("_pid", get_pid_str());          // set pid
+        insert("_client_version", "6.1.11");    // set client version
+        insert("_platform", "x86_64");          // set platform
     }
 
     mysql::connection_attributes& mysql::connection_attributes::get_instance()
