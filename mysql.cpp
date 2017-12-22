@@ -20,6 +20,12 @@
 namespace flyzero
 {
 
+    mysql::on_status_handler mysql::handlers_[mysql::CLIENT_STATUS_END] = {
+        mysql::on_unconnected,
+        mysql::on_auth_sent,
+        nullptr
+    };
+
     static const std::size_t SHA1_HASH_SIZE = 20;
 
     inline uint16_t uint2korr(const char * const a)
@@ -202,6 +208,7 @@ namespace flyzero
         , alloc_(alloc)
         , dealloc_(dealloc)
         , npkt_(0)
+        , client_status_(CLIENT_UNCONNECTED)
         , client_flag_(CLIENT_CAPABILITIES)
         , protocol_version_(0)
         , server_version_(allocator<char>(alloc, dealloc))
@@ -272,17 +279,14 @@ namespace flyzero
 
     void mysql::on_read()
     {
-        char buffer[1024];
+        char buffer[4096];
         std::size_t pos = 0;
         ssize_t nread;
         while ((nread = ::read(sock_.get(), buffer + pos, sizeof buffer - pos)) > 0) pos += nread;
         if (nread == -1 && (EAGAIN == errno || errno == EWOULDBLOCK))
         {
-            if (parse_server_auth_packet(buffer, pos))
-            {
-                // TODO: set auth success status
-                std::cout << "auth success" << std::endl;
-            }
+            if (handlers_[client_status_])
+                handlers_[client_status_](this, buffer, pos);
         }
         else
         {
@@ -307,7 +311,7 @@ namespace flyzero
         return sock_.get();
     }
 
-    bool mysql::parse_server_auth_packet(const char * data, const std::size_t size)
+    bool mysql::parse_server_auth_packet(const char * data, const std::size_t size, char (&scrambled_password_buff)[SCRAMBLE_LENGTH])
     {
         if (size < 4)
         {
@@ -391,15 +395,14 @@ namespace flyzero
         const auto scramble_part_2_len = total_scrable_len - scramble_part_1_len - 1;
 
         // construct scramble message
-        char scramble_message[SCRAMBLE_LENGTH], scrambled_password[SCRAMBLE_LENGTH];
+        char scramble_message[SCRAMBLE_LENGTH];
         std::copy(scramble_part_1, scramble_part_1 + scramble_part_1_len, scramble_message);
         std::copy(scramble_part_2, scramble_part_2 + scramble_part_2_len, scramble_message + scramble_part_1_len);
 
         // scramble password
-        password_scramble(scrambled_password, SCRAMBLE_LENGTH, scramble_message, SCRAMBLE_LENGTH);
+        password_scramble(scrambled_password_buff, SCRAMBLE_LENGTH, scramble_message, SCRAMBLE_LENGTH);
 
-        // reply server auth packet
-        return reply_server_auth_packet(scrambled_password);
+        return true;;
     }
 
     bool mysql::reply_server_auth_packet(const char(& scrambled_password)[SCRAMBLE_LENGTH])
@@ -491,4 +494,24 @@ namespace flyzero
         mysql_crypt(dest, reinterpret_cast<uint8_t*>(dest), stage1, size);
     }
 
+    void mysql::on_unconnected(mysql* obj, const char * data, const std::size_t size)
+    {
+        assert(obj);
+        assert(data);
+        assert(size > 0);
+
+        char scrambled_password[SCRAMBLE_LENGTH];
+        if (obj->parse_server_auth_packet(data, size, scrambled_password) && obj->reply_server_auth_packet(scrambled_password))
+            obj->client_status_ = CLIENT_AUTH_SENT;
+        else
+        {
+            // TODO: parse/send auth failed
+        }
+    }
+
+    void mysql::on_auth_sent(mysql * obj, const char * data, const std::size_t size)
+    {
+        obj->client_status_ = CLIENT_CONNECTED;
+        std::cout << "auth sucess" << std::endl;
+    }
 }

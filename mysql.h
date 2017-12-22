@@ -104,6 +104,16 @@ namespace flyzero
             COM_END
         };
 
+        enum client_status
+        {
+            CLIENT_UNCONNECTED,
+            CLIENT_AUTH_SENT,
+            CLIENT_CONNECTED,
+
+            // Must be last
+            CLIENT_STATUS_END
+        };
+
         static const uint32_t CLIENT_CAPABILITIES = CLIENT_LONG_PASSWORD | \
                                                     CLIENT_LONG_FLAG | \
                                                     CLIENT_TRANSACTIONS | \
@@ -125,6 +135,7 @@ namespace flyzero
         using string = std::basic_string<char, std::char_traits<char>, allocator<char> >;
         using alloc_type = std::function<void*(std::size_t)>;
         using dealloc_type = std::function<void(void *)>;
+        using on_status_handler = std::function<void (mysql *, const char *, std::size_t)>;
 
         struct hash
         {
@@ -170,9 +181,11 @@ namespace flyzero
         void on_write() override;
         void on_close() override;
         int get_fd() const override;
-        bool parse_server_auth_packet(const char * data, const std::size_t size);
+        bool parse_server_auth_packet(const char * data, const std::size_t size, char (&scrambled_passord_buff)[SCRAMBLE_LENGTH]);
         bool reply_server_auth_packet(const char (&scrambled_password)[SCRAMBLE_LENGTH]);
         void password_scramble(char * dest, const std::size_t size, const char * message, std::size_t message_len) const;
+        static void on_unconnected(mysql * obj, const char * data, const std::size_t size);
+        static void on_auth_sent(mysql * obj, const char * data, const std::size_t size);
 
     private:
         epoll & epoll_;
@@ -180,6 +193,7 @@ namespace flyzero
         dealloc_type dealloc_;
         file_descriptor sock_;
         std::size_t npkt_;
+        client_status client_status_;
         uint32_t client_flag_;
         uint32_t protocol_version_;
         string server_version_;
@@ -190,6 +204,7 @@ namespace flyzero
         string user_;
         string password_;
         string db_;
+        static on_status_handler handlers_[CLIENT_STATUS_END];
     };
 
 }
