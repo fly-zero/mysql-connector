@@ -22,37 +22,62 @@ namespace flyzero
 
     static const std::size_t SHA1_HASH_SIZE = 20;
 
-    static uint16_t uint2korr(const char * const a)
+    inline uint16_t uint2korr(const char * const a)
     {
         assert(a);
         return *reinterpret_cast<const uint16_t *>(a);
     }
 
-    static uint32_t uint3korr(const char * const a)
+    inline uint32_t uint3korr(const char * const a)
     {
         assert(a);
         return uint32_t(uint32_t(a[0]) + (uint32_t(a[1]) << 8) + (uint32_t(a[2]) << 16));
     }
 
-    static uint32_t uint4korr(const char * a)
+    inline uint32_t uint4korr(const char * a)
     {
         assert(a);
         return *reinterpret_cast<const uint32_t *>(a);
     }
 
-    void int4store(unsigned char * t, uint32_t a)
+    inline void int2store(unsigned char * t, const uint16_t a)
+    {
+        *reinterpret_cast<uint16_t *>(t) = a;
+    }
+
+    inline void int3store(unsigned char * t, const uint32_t a)
+    {
+        assert((a & 0xFF000000U) == 0);
+        *t = static_cast<unsigned char>(a);
+        *(t + 1) = static_cast<unsigned char>(a >> 8);
+        *(t + 2) = static_cast<unsigned char>(a >> 16);
+    }
+
+    inline void int4store(unsigned char * t, const uint32_t a)
     {
         *reinterpret_cast<uint32_t *>(t) = a;
     }
 
-    static const char * strend(const char * s)
+    inline void int8store(unsigned char * t, const uint64_t a)
+    {
+        *reinterpret_cast<uint64_t *>(t) = a;
+    }
+
+    inline const char * strend(const char * s)
     {
         assert(s);
         while (*s) ++s;
         return s;
     }
 
-    static void sha1_hash(uint8_t * digest, const char * buff, std::size_t size)
+    inline char * strmake(char * dst, const char * src, const std::size_t length)
+    {
+        memcpy(dst, src, length);
+        dst[length] = 0;
+        return dst + length + 1;
+    }
+
+    inline void sha1_hash(uint8_t * digest, const char * buff, std::size_t size)
     {
         SHA_CTX ctx;
         SHA1_Init(&ctx);
@@ -60,7 +85,7 @@ namespace flyzero
         SHA1_Final(digest, &ctx);
     }
 
-    static void sha1_hash(uint8_t * digest, const char * buff1, std::size_t size1, const char * buff2, std::size_t size2)
+    inline void sha1_hash(uint8_t * digest, const char * buff1, std::size_t size1, const char * buff2, std::size_t size2)
     {
         SHA_CTX ctx;
         SHA1_Init(&ctx);
@@ -69,7 +94,7 @@ namespace flyzero
         SHA1_Final(digest, &ctx);
     }
 
-    static void mysql_crypt(char *to, const uint8_t *s1, const uint8_t *s2, const uint len)
+    inline void mysql_crypt(char *to, const uint8_t *s1, const uint8_t *s2, const uint len)
     {
         const auto s1_end = s1 + len;
         while (s1 < s1_end)
@@ -98,6 +123,54 @@ namespace flyzero
         if (i < 16777216ULL)
             return 4;
         return 9;
+    }
+
+    char * store_length(char * dst, const std::size_t length)
+    {
+        if (length < 251ULL)
+        {
+            *reinterpret_cast<unsigned char *>(dst) = static_cast<unsigned char>(length);
+            return dst + 1;
+        }
+
+        if (length < 65536ULL)
+        {
+            *reinterpret_cast<unsigned char *>(dst++) = 252;
+            int2store(reinterpret_cast<unsigned char *>(dst), static_cast<uint16_t>(length));
+            return dst + 2;
+        }
+
+        if (length < 16777216ULL)
+        {
+            *reinterpret_cast<unsigned char *>(dst++) = 253;
+            int3store(reinterpret_cast<unsigned char *>(dst), static_cast<uint32_t>(length));
+            return dst + 3;
+        }
+
+        *reinterpret_cast<unsigned char *>(dst++) = 254;
+        int8store(reinterpret_cast<unsigned char *>(dst), static_cast<uint64_t>(length));
+        return dst + 8;
+    }
+
+    char * mysql::connection_attributes::store(char * dst) const
+    {
+        for (const auto & attr : attrs_)
+        {
+            // store key
+            auto & key = attr.first;
+            const auto key_len = key.length();
+            dst = store_length(dst, key_len);
+            memcpy(dst, key.c_str(), key_len);
+            dst += key_len;
+
+            // store value
+            auto & val = attr.second;
+            const auto val_len = val.length();
+            dst = store_length(dst, val_len);
+            memcpy(dst, val.c_str(), val_len);
+            dst += val_len;
+        }
+        return dst;
     }
 
     mysql::connection_attributes::connection_attributes()
@@ -142,8 +215,13 @@ namespace flyzero
     {
     }
 
-    bool mysql::connect(const conststr & unix_socket, const conststr & user, const conststr & password, const conststr & db, unsigned long client_flag)
+    bool mysql::connect(const conststr & unix_socket, const conststr & user, const conststr & password, const conststr & db, const uint32_t client_flag)
     {
+        assert(!unix_socket.empty());
+        assert(!user.empty());
+        assert(!password.empty());
+        assert(!db.empty());
+
         sock_ = file_descriptor(socket(AF_UNIX, SOCK_STREAM, 0));
 
         if (!sock_)
@@ -170,11 +248,23 @@ namespace flyzero
             return false;
         }
 
+        // set client flag
         client_flag_ |= client_flag;
-        user_.assign(user.c_str(), user.length());
-        password_.assign(password.c_str(), password.length());
-        db_.assign(db_.c_str(), db_.length());
 
+        // save user
+        user_.assign(user.c_str(), user.length());
+
+        // save password
+        password_.assign(password.c_str(), password.length());
+
+        // save db and set client flag
+        if (!db.empty())
+        {
+            db_.assign(db.c_str(), db.length());
+            client_flag_ |= CLIENT_CONNECT_WITH_DB;
+        }
+
+        // add fd to epoll
         epoll_.add(*this, epoll::epoll_read | epoll::epoll_close | epoll::epoll_edge);
 
         return false;
@@ -188,14 +278,18 @@ namespace flyzero
         while ((nread = ::read(sock_.get(), buffer + pos, sizeof buffer - pos)) > 0) pos += nread;
         if (nread == -1 && (EAGAIN == errno || errno == EWOULDBLOCK))
         {
-            // TODO: parse packet
-            parse_server_auth_packet(buffer, pos);
+            if (parse_server_auth_packet(buffer, pos))
+            {
+                // TODO: set auth success status
+                std::cout << "auth success" << std::endl;
+            }
         }
         else
         {
             // TODO: connection is closed
             epoll_.remove(*this);
             sock_.close();
+            std::cout << "connection closed by remote host" << std::endl;
         }
     }
 
@@ -305,30 +399,85 @@ namespace flyzero
         password_scramble(scrambled_password, SCRAMBLE_LENGTH, scramble_message, SCRAMBLE_LENGTH);
 
         // reply server auth packet
-        reply_server_auth_packet(scrambled_password);
-
-        return true;
+        return reply_server_auth_packet(scrambled_password);
     }
 
-    void mysql::reply_server_auth_packet(const char(& scrambled_password)[SCRAMBLE_LENGTH])
+    bool mysql::reply_server_auth_packet(const char(& scrambled_password)[SCRAMBLE_LENGTH])
     {
+        // get connection_attributes instance
+        auto & conn_attrs = connection_attributes::get_instance();
+
         // calculate buffer size
-        const auto connect_attrs_len = server_capabilities_ & CLIENT_CONNECT_ATTRS ? connection_attributes::get_instance().get_attrs_length() : 0;
+        const auto connect_attrs_len = server_capabilities_ & CLIENT_CONNECT_ATTRS ? conn_attrs.get_attrs_length() : 0;
         const auto buff_size = 4 + 33 + USERNAME_LENGTH + SCRAMBLE_LENGTH + 9 + NAME_LEN + NAME_LEN + connect_attrs_len + 9;
         std::unique_ptr<char[], dealloc_type> buffer(reinterpret_cast<char *>(alloc_(buff_size)), dealloc_);
 
+        // skip packet length
         auto p = buffer.get() + 4;
 
         assert(client_flag_ & CLIENT_PROTOCOL_41);  // use 4.1 protocol
 
         assert(buff_size >= 32);    // 4.1 protocol has a 32 byte option flag
 
+        // store client flag
         int4store(reinterpret_cast<unsigned char *>(p), client_flag_);
+
+        // store max packet size
         int4store(reinterpret_cast<unsigned char *>(p + 4), MAX_PACKET_SIZE);
+
+        // store charset number
         reinterpret_cast<uint8_t *>(p)[8] = CHARSET_LATIN1;
+
+        // clear option header
         memset(buffer.get() + 9, 0, 32 - 9);
 
-        p += 32;
+        // store user
+        p = strmake(p + 32, user_.c_str(), user_.length());
+
+        // store scramble password length
+        p = store_length(p, SCRAMBLE_LENGTH);
+
+        // store scramble password
+        memcpy(p, scrambled_password, SCRAMBLE_LENGTH);
+        p += SCRAMBLE_LENGTH;
+
+        // store db
+        if (server_capabilities_ & CLIENT_CONNECT_WITH_DB && !db_.empty())
+            p = strmake(p, db_.c_str(), db_.length());
+
+        // store auth plugin name
+        if (server_capabilities_ & CLIENT_PLUGIN_AUTH)
+        {
+            static const conststr AUTH_PLUGIN_NAME("mysql_native_password");
+            p = strmake(p, AUTH_PLUGIN_NAME.c_str(), AUTH_PLUGIN_NAME.length());
+        }
+
+        // store connect attributes length
+        p = store_length(p, conn_attrs.get_attrs_length());
+
+        // store connect attributes
+        p = conn_attrs.store(p);
+
+        // store pakcet size and sepuence number
+        const auto packet_size = p - buffer.get();
+        int3store(reinterpret_cast<unsigned char *>(buffer.get()), packet_size - 4);
+        buffer[3] = npkt_++;
+
+        // send reply message
+        for (std::size_t pos = 0; pos < packet_size; )
+        {
+            auto nwrite = write(sock_.get(), buffer.get() + pos, packet_size - pos);
+
+            if (nwrite == -1)
+            {
+                // TODO: write error
+                return false;
+            }
+
+            pos += nwrite;
+        }
+
+        return true;
     }
 
     void mysql::password_scramble(char * dest, const std::size_t size, const char * message, const std::size_t message_len) const

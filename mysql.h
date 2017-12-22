@@ -111,6 +111,7 @@ namespace flyzero
             static connection_attributes & get_instance();
             void insert(const char * key, const char * value);
             std::size_t get_attrs_length() const { return attrs_length_; }
+            char * store(char * dst) const;
 
         protected:
             connection_attributes();
@@ -122,8 +123,8 @@ namespace flyzero
         }; // class connection_attributes
 
     public:
-        explicit mysql(epoll & ep, const alloc_type & alloc = alloc_type(), const dealloc_type & dealloc = dealloc_type());
-        bool connect(const conststr & unix_socket, const conststr & user, const conststr & password, const conststr & db, unsigned long client_flag);
+        explicit mysql(epoll & ep, const alloc_type & alloc = malloc, const dealloc_type & dealloc = free);
+        bool connect(const conststr & unix_socket, const conststr & user, const conststr & password, const conststr & db, const uint32_t client_flag);
 
     protected:
         void on_read() override;
@@ -131,7 +132,7 @@ namespace flyzero
         void on_close() override;
         int get_fd() const override;
         bool parse_server_auth_packet(const char * data, const std::size_t size);
-        void reply_server_auth_packet(const char (&scrambled_password)[SCRAMBLE_LENGTH]);
+        bool reply_server_auth_packet(const char (&scrambled_password)[SCRAMBLE_LENGTH]);
         void password_scramble(char * dest, const std::size_t size, const char * message, std::size_t message_len) const;
 
     private:
