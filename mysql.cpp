@@ -21,9 +21,9 @@ namespace flyzero
 {
 
     mysql::on_status_handler mysql::handlers_[mysql::CLIENT_STATUS_END] = {
-        mysql::on_unconnected,
-        mysql::on_auth_sent,
-        nullptr
+        on_server_auth_info,
+        on_auth_result,
+        on_client_connected,
     };
 
     static const std::size_t SHA1_HASH_SIZE = 20;
@@ -109,7 +109,7 @@ namespace flyzero
 
     // this function is not thread safe
     // TODO: make a thread-safe version
-    const char * get_pid_str()
+    const char * get_pid_str(void)
     {
         static char buff[24];
         if (buff[0] != '0')
@@ -179,7 +179,7 @@ namespace flyzero
         return dst;
     }
 
-    mysql::connection_attributes::connection_attributes()
+    mysql::connection_attributes::connection_attributes(void)
         : attrs_length_(0)
     {
         insert("_os", "Linux");                 // set os
@@ -189,7 +189,7 @@ namespace flyzero
         insert("_platform", "x86_64");          // set platform
     }
 
-    mysql::connection_attributes& mysql::connection_attributes::get_instance()
+    mysql::connection_attributes& mysql::connection_attributes::get_instance(void)
     {
         static connection_attributes attris;
         return attris;
@@ -203,12 +203,12 @@ namespace flyzero
         attrs_length_ += get_int_mysql_storage_size(key_len) + key_len + get_int_mysql_storage_size(val_len) + val_len;
     }
 
-    mysql::mysql(epoll & ep, const alloc_type & alloc /* = alloc_type() */, const dealloc_type & dealloc /* = dealloc_type() */)
-        : epoll_(ep)
-        , alloc_(alloc)
+    mysql::mysql(const alloc_type & alloc /* = alloc_type() */, const dealloc_type & dealloc /* = dealloc_type() */)
+        : alloc_(alloc)
         , dealloc_(dealloc)
+        , sock_(socket(AF_UNIX, SOCK_STREAM, 0))
         , npkt_(0)
-        , client_status_(CLIENT_UNCONNECTED)
+        , client_status_(CLIENT_STATUS_END)
         , client_flag_(CLIENT_CAPABILITIES)
         , protocol_version_(0)
         , server_version_(allocator<char>(alloc, dealloc))
@@ -219,6 +219,7 @@ namespace flyzero
         , user_(allocator<char>(alloc, dealloc))
         , password_(allocator<char>(alloc, dealloc))
         , db_(allocator<char>(alloc, dealloc))
+        , query_flag_(false)
     {
     }
 
@@ -228,8 +229,6 @@ namespace flyzero
         assert(!user.empty());
         assert(!password.empty());
         assert(!db.empty());
-
-        sock_ = file_descriptor(socket(AF_UNIX, SOCK_STREAM, 0));
 
         if (!sock_)
         {
@@ -251,8 +250,12 @@ namespace flyzero
 
         if (res == -1)
         {
-            // TODO: connect error
-            return false;
+            if (errno == ENOENT)
+            {
+                // TODO: No such file or directory error
+                return false;
+            }
+            // TODO: other connect error
         }
 
         // set client flag
@@ -271,13 +274,49 @@ namespace flyzero
             client_flag_ |= CLIENT_CONNECT_WITH_DB;
         }
 
-        // add fd to epoll
-        epoll_.add(*this, epoll::epoll_read | epoll::epoll_close | epoll::epoll_edge);
+        // set client status
+        client_status_ = CLIENT_WAIT_AUTH_INFO;
 
-        return false;
+        return true;
     }
 
-    void mysql::on_read()
+    int mysql::query(const char * stm, uint32_t length)
+    {
+        // clear packet counter
+        npkt_ = 0;
+
+        const auto pkt_len = 4 + 1 + length;
+        char stack_buffer[1024], *pbuf = stack_buffer;
+        std::unique_ptr<char[], dealloc_type> heap_buffer(nullptr, dealloc_);
+
+        if (pkt_len > sizeof stack_buffer)
+        {
+            heap_buffer.reset(reinterpret_cast<char *>(alloc_(pkt_len)));
+            pbuf = heap_buffer.get();
+        }
+
+        int3store(reinterpret_cast<unsigned char*>(pbuf), length);
+        pbuf[4] = static_cast<unsigned char>(COM_QUERY);
+
+        // TODO: check length >= MAX_PACKET_LENGTH
+
+        pbuf[3] = static_cast<unsigned char>(npkt_++);
+
+        auto ret = sock_.write(pbuf, pkt_len) == std::size_t(-1) ? -1 : 0;
+
+        if (sock_.write(pbuf, pkt_len) == std::size_t(-1))
+        {
+            sock_.close();
+            // TODO: write query error
+            return -1;
+        }
+
+        query_flag_ = false;
+
+        return 0;
+    }
+
+    void mysql::on_read(void)
     {
         char buffer[4096];
         std::size_t pos = 0;
@@ -286,27 +325,27 @@ namespace flyzero
         if (nread == -1 && (EAGAIN == errno || errno == EWOULDBLOCK))
         {
             if (handlers_[client_status_])
-                handlers_[client_status_](this, buffer, pos);
+                client_status_ = handlers_[client_status_](this, buffer, pos);
         }
         else
         {
             // TODO: connection is closed
-            epoll_.remove(*this);
             sock_.close();
+            on_net_connect_closed();
             std::cout << "connection closed by remote host" << std::endl;
         }
     }
 
-    void mysql::on_write()
+    void mysql::on_write(void)
     {
     }
 
-    void mysql::on_close()
+    void mysql::on_close(void)
     {
         std::cout << "close connection" << std::endl;
     }
 
-    int mysql::get_fd() const
+    int mysql::get_fd(void) const
     {
         return sock_.get();
     }
@@ -402,7 +441,7 @@ namespace flyzero
         // scramble password
         password_scramble(scrambled_password_buff, SCRAMBLE_LENGTH, scramble_message, SCRAMBLE_LENGTH);
 
-        return true;;
+        return true;
     }
 
     bool mysql::reply_server_auth_packet(const char(& scrambled_password)[SCRAMBLE_LENGTH])
@@ -413,10 +452,17 @@ namespace flyzero
         // calculate buffer size
         const auto connect_attrs_len = server_capabilities_ & CLIENT_CONNECT_ATTRS ? conn_attrs.get_attrs_length() : 0;
         const auto buff_size = 4 + 33 + USERNAME_LENGTH + SCRAMBLE_LENGTH + 9 + NAME_LEN + NAME_LEN + connect_attrs_len + 9;
-        std::unique_ptr<char[], dealloc_type> buffer(reinterpret_cast<char *>(alloc_(buff_size)), dealloc_);
+        char stack_buffer[1024], *pbuf = stack_buffer;
+        std::unique_ptr<char[], dealloc_type> heap_buffer(nullptr, dealloc_);
+
+        if (buff_size > sizeof stack_buffer)
+        {
+            heap_buffer.reset(reinterpret_cast<char *>(alloc_(buff_size)));
+            pbuf = heap_buffer.get();
+        }
 
         // skip packet length
-        auto p = buffer.get() + 4;
+        auto p = pbuf + 4;
 
         assert(client_flag_ & CLIENT_PROTOCOL_41);  // use 4.1 protocol
 
@@ -432,7 +478,7 @@ namespace flyzero
         reinterpret_cast<uint8_t *>(p)[8] = CHARSET_LATIN1;
 
         // clear option header
-        memset(buffer.get() + 9, 0, 32 - 9);
+        memset(pbuf + 9, 0, 32 - 9);
 
         // store user
         p = strmake(p + 32, user_.c_str(), user_.length());
@@ -462,25 +508,12 @@ namespace flyzero
         p = conn_attrs.store(p);
 
         // store pakcet size and sepuence number
-        const auto packet_size = p - buffer.get();
-        int3store(reinterpret_cast<unsigned char *>(buffer.get()), packet_size - 4);
-        buffer[3] = npkt_++;
+        const auto packet_size = p - pbuf;
+        int3store(reinterpret_cast<unsigned char *>(pbuf), packet_size - 4);
+        pbuf[3] = npkt_++;
 
         // send reply message
-        for (std::size_t pos = 0; pos < packet_size; )
-        {
-            auto nwrite = write(sock_.get(), buffer.get() + pos, packet_size - pos);
-
-            if (nwrite == -1)
-            {
-                // TODO: write error
-                return false;
-            }
-
-            pos += nwrite;
-        }
-
-        return true;
+        return sock_.write(pbuf, packet_size) != std::size_t(-1);
     }
 
     void mysql::password_scramble(char * dest, const std::size_t size, const char * message, const std::size_t message_len) const
@@ -494,24 +527,47 @@ namespace flyzero
         mysql_crypt(dest, reinterpret_cast<uint8_t*>(dest), stage1, size);
     }
 
-    void mysql::on_unconnected(mysql* obj, const char * data, const std::size_t size)
+    mysql::client_status mysql::on_server_auth_info(mysql * obj, const char* data, const std::size_t size)
     {
         assert(obj);
         assert(data);
         assert(size > 0);
 
+        obj->on_net_connect_success();
+
         char scrambled_password[SCRAMBLE_LENGTH];
         if (obj->parse_server_auth_packet(data, size, scrambled_password) && obj->reply_server_auth_packet(scrambled_password))
-            obj->client_status_ = CLIENT_AUTH_SENT;
-        else
-        {
-            // TODO: parse/send auth failed
-        }
+            return CLIENT_WAIT_AUTH_RESULT;
+        // TODO: parse/send auth failed
+        return CLIENT_STATUS_END;
     }
 
-    void mysql::on_auth_sent(mysql * obj, const char * data, const std::size_t size)
+    mysql::client_status mysql::on_auth_result(mysql * obj, const char * data, const std::size_t size)
     {
-        obj->client_status_ = CLIENT_CONNECTED;
-        std::cout << "auth sucess" << std::endl;
+        obj->on_client_connect_success();
+        return CLIENT_CONNECTED;
+    }
+
+    mysql::client_status mysql::on_client_connected(mysql* obj, const char* data, const std::size_t size)
+    {
+        if (obj->query_flag_)
+        {
+            // TODO: parse query result
+            obj->on_query_result();
+            obj->query_flag_ = false;
+        }
+        else
+        {
+            // unexpected data
+            std::cerr << "unexpected data received" << std::endl;
+        }
+
+        return CLIENT_CONNECTED;
+    }
+
+    mysql::client_status mysql::on_wait_query_result(mysql* obj, const char* data, const std::size_t size)
+    {
+        obj->on_query_result();
+        return CLIENT_CONNECTED;
     }
 }

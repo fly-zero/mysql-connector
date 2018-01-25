@@ -106,8 +106,8 @@ namespace flyzero
 
         enum client_status
         {
-            CLIENT_UNCONNECTED,
-            CLIENT_AUTH_SENT,
+            CLIENT_WAIT_AUTH_INFO,
+            CLIENT_WAIT_AUTH_RESULT,
             CLIENT_CONNECTED,
 
             // Must be last
@@ -135,7 +135,7 @@ namespace flyzero
         using string = std::basic_string<char, std::char_traits<char>, allocator<char> >;
         using alloc_type = std::function<void*(std::size_t)>;
         using dealloc_type = std::function<void(void *)>;
-        using on_status_handler = std::function<void (mysql *, const char *, std::size_t)>;
+        using on_status_handler = std::function<client_status (mysql *, const char *, std::size_t)>;
 
         struct hash
         {
@@ -173,22 +173,30 @@ namespace flyzero
         }; // class connection_attributes
 
     public:
-        explicit mysql(epoll & ep, const alloc_type & alloc = malloc, const dealloc_type & dealloc = free);
+        explicit mysql(const alloc_type & alloc = malloc, const dealloc_type & dealloc = free);
+        virtual ~mysql(void) = default;
         bool connect(const conststr & unix_socket, const conststr & user, const conststr & password, const conststr & db, const uint32_t client_flag);
+        int query(const char * stm, uint32_t length);
+
+        virtual void on_net_connect_success(void) = 0;
+        virtual void on_net_connect_closed(void) = 0;
+        virtual void on_client_connect_success(void) = 0;
+        virtual void on_query_result(void) = 0;
 
     protected:
-        void on_read() override;
-        void on_write() override;
-        void on_close() override;
-        int get_fd() const override;
+        void on_read(void) override final;
+        void on_write(void) override final;
+        void on_close(void) override final;
+        int get_fd(void) const override final;
         bool parse_server_auth_packet(const char * data, const std::size_t size, char (&scrambled_passord_buff)[SCRAMBLE_LENGTH]);
         bool reply_server_auth_packet(const char (&scrambled_password)[SCRAMBLE_LENGTH]);
         void password_scramble(char * dest, const std::size_t size, const char * message, std::size_t message_len) const;
-        static void on_unconnected(mysql * obj, const char * data, const std::size_t size);
-        static void on_auth_sent(mysql * obj, const char * data, const std::size_t size);
+        static client_status on_server_auth_info(mysql* obj, const char* data, const std::size_t size);
+        static client_status on_auth_result(mysql * obj, const char * data, const std::size_t size);
+        static client_status on_client_connected(mysql * obj, const char * data, const std::size_t size);
+        static client_status on_wait_query_result(mysql * obj, const char * data, const std::size_t size);
 
     private:
-        epoll & epoll_;
         alloc_type alloc_;
         dealloc_type dealloc_;
         file_descriptor sock_;
@@ -204,6 +212,7 @@ namespace flyzero
         string user_;
         string password_;
         string db_;
+        bool query_flag_;
         static on_status_handler handlers_[CLIENT_STATUS_END];
     };
 

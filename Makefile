@@ -3,7 +3,7 @@ target = mysql_test
 all: $(target)
 
 $(target): test.o mysql.o
-	g++ $^ -Llibflyzero -o $@ -lflyzero -lcrypto
+	g++ $^ -Llibflyzero -o $@ -lflyzero -lcrypto -lpthread
 
 %.o: %.cpp
 	g++ -g3 -c -std=c++14 -Ilibflyzero $< -o $@
