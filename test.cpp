@@ -12,6 +12,12 @@ public:
     {
     }
 
+    ~mysql_client(void)
+    {
+        if (thread_.joinable())
+            thread_.join();
+    }
+
 protected:
     void on_net_connect_success(void) override;
     void on_net_connect_closed(void) override;
@@ -43,6 +49,7 @@ void mysql_client::on_client_connect_success(void)
 
 void mysql_client::on_query_result(void)
 {
+    std::cout << "result received" << std::endl;
 }
 
 int main()
@@ -58,8 +65,6 @@ int main()
         return 1;
 
     ep.run(8, -1, nullptr, nullptr);
-
-
 
     return 0;
 }

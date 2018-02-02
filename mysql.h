@@ -194,7 +194,6 @@ namespace flyzero
         static client_status on_server_auth_info(mysql* obj, const char* data, const std::size_t size);
         static client_status on_auth_result(mysql * obj, const char * data, const std::size_t size);
         static client_status on_client_connected(mysql * obj, const char * data, const std::size_t size);
-        static client_status on_wait_query_result(mysql * obj, const char * data, const std::size_t size);
 
     private:
         alloc_type alloc_;

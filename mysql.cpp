@@ -295,14 +295,14 @@ namespace flyzero
             pbuf = heap_buffer.get();
         }
 
-        int3store(reinterpret_cast<unsigned char*>(pbuf), length);
+        int3store(reinterpret_cast<unsigned char*>(pbuf), length + 1);
         pbuf[4] = static_cast<unsigned char>(COM_QUERY);
 
         // TODO: check length >= MAX_PACKET_LENGTH
 
         pbuf[3] = static_cast<unsigned char>(npkt_++);
 
-        auto ret = sock_.write(pbuf, pkt_len) == std::size_t(-1) ? -1 : 0;
+        memcpy(pbuf + 5, stm, length);
 
         if (sock_.write(pbuf, pkt_len) == std::size_t(-1))
         {
@@ -311,7 +311,7 @@ namespace flyzero
             return -1;
         }
 
-        query_flag_ = false;
+        query_flag_ = true;
 
         return 0;
     }
@@ -565,9 +565,4 @@ namespace flyzero
         return CLIENT_CONNECTED;
     }
 
-    mysql::client_status mysql::on_wait_query_result(mysql* obj, const char* data, const std::size_t size)
-    {
-        obj->on_query_result();
-        return CLIENT_CONNECTED;
-    }
 }
